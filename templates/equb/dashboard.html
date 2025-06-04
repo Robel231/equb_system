@@ -18,6 +18,7 @@
             <p>Queue Position: {{ member.queue_position }}</p>
             <p>Round Number: {{ member.round_number }}</p>
             <p>Status: {{ member.status }}</p>
+            <p>Commission Earned: {{ member.commission_earned }} ETB</p>
             {% if kyc_status == 'pending' %}
                 <p>KYC Status: Pending - Please wait for admin approval.</p>
             {% elif kyc_status == 'approved' %}
@@ -26,8 +27,7 @@
                 <p>KYC Status: Rejected - Please upload KYC again.</p>
                 <a href="{% url 'users:upload_kyc' %}" class="btn btn-primary">Upload KYC</a>
             {% endif %}
-            <a href="{% url 'equb:complete_round' %}" class="btn btn-success">Complete Round</a>
-            <a href="{% url 'payments:upload_payment' %}" class="btn btn-primary">Upload Payment</a>
+            <a href="{% url 'equb:refer_member' %}" class="btn btn-info">Refer a New Member</a>
             <a href="{% url 'logout' %}" class="btn btn-danger">Logout</a>
         {% else %}
             <p>No membership record found. Contact admin.</p>
@@ -46,19 +46,23 @@
                         <th>Date</th>
                         <th>Type</th>
                         <th>Amount (ETB)</th>
+                        <th>Direction</th>
+                        <th>Other Party</th>
                         <th>Transaction Picture</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for transaction in payment_history %}
+                    {% for entry in payment_history %}
                         <tr>
-                            <td>{{ transaction.created_at|date:"Y-m-d H:i" }}</td>
-                            <td>{{ transaction.transaction_type }}</td>
-                            <td>{{ transaction.amount }}</td>
+                            <td>{{ entry.date|date:"Y-m-d H:i" }}</td>
+                            <td>{{ entry.type }}</td>
+                            <td>{{ entry.amount }}</td>
+                            <td>{{ entry.direction }}</td>
+                            <td>{{ entry.other_party }}</td>
                             <td>
-                                {% if transaction.payment.payment_proof %}
-                                    <a href="{{ transaction.payment.payment_proof.url }}" target="_blank">
-                                        <img src="{{ transaction.payment.payment_proof.url }}" alt="Payment Proof" class="payment-proof-img">
+                                {% if entry.proof_url %}
+                                    <a href="{{ entry.proof_url }}" target="_blank">
+                                        <img src="{{ entry.proof_url }}" alt="Payment Proof" class="payment-proof-img">
                                     </a>
                                 {% else %}
                                     No Image
@@ -84,6 +88,32 @@
             </ul>
         {% else %}
             <p>No team members yet. Refer others to build your team.</p>
+        {% endif %}
+
+        <!-- Upline Payment Information -->
+        <h3 class="mt-4">Upline Payment Details</h3>
+        {% if upline_member %}
+            <p>Upline: {{ upline_member.user.username }} (ID: {{ upline_member.user.id }})</p>
+            {% if not upline_payment_blocked %}
+                <p>CBE Account Number: {{ upline_account_number }}</p>
+                <p>Amount to Pay: {{ upline_amount|floatformat:2 }} ETB</p>
+            {% endif %}
+            {% if payment_status_message %}
+                <div class="alert alert-info">{{ payment_status_message }}</div>
+                {% if upline_payment_due and not upline_payment_blocked %}
+                    <form method="post" action="{% url 'payments:pay_upline' %}" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        <input type="hidden" name="amount" value="{{ upline_amount|floatformat:2 }}">
+                        <div class="mb-3">
+                            <label for="payment_proof" class="form-label">Upload Payment Proof to Upline</label>
+                            <input type="file" name="payment_proof" class="form-control" required>
+                        </div>
+                        <button type="submit" class="btn btn-warning">Pay Upline</button>
+                    </form>
+                {% endif %}
+            {% endif %}
+        {% else %}
+            <p>No upline assigned at this time.</p>
         {% endif %}
     </div>
 </body>

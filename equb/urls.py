@@ -2,8 +2,9 @@ from django.urls import path
 from . import views
 
 app_name = 'equb'
+
 urlpatterns = [
-    path('', views.home, name='home'),  # Root path for homepage
+    path('', views.home, name='home'),
     path('dashboard/', views.dashboard, name='dashboard'),
-    path('complete-round/', views.complete_round, name='complete_round'),
+    path('refer/', views.refer_member, name='refer_member'),
 ]

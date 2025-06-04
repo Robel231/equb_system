@@ -5,4 +5,4 @@ class PaymentsConfig(AppConfig):
     name = 'payments'
 
     def ready(self):
-        import payments.signals  # Import the signals module
+        import payments.signals  # Import signals to connect them
