@@ -11,6 +11,7 @@ class EqubMember(models.Model):
     total_received = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_paid_to_upline = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     commission_earned = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_service_fee_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0)  # New field
 
     def get_payment_amount(self):
         amounts = {1: 3000, 2: 6000, 3: 12000, 4: 24000, 5: 48000, 6: 96000}

@@ -93,7 +93,7 @@
         <!-- Upline Payment Information -->
         <h3 class="mt-4">Upline Payment Details</h3>
         {% if upline_member %}
-            <p>Upline: {{ upline_member.user.username }} (ID: {{ upline_member.user.id }})</p>
+            <p>Upline: {{ upline_member.user.userprofile.name }} (ID: {{ upline_member.user.id }})</p>
             {% if not upline_payment_blocked %}
                 <p>CBE Account Number: {{ upline_account_number }}</p>
                 <p>Amount to Pay: {{ upline_amount|floatformat:2 }} ETB</p>
@@ -111,6 +111,21 @@
                         <button type="submit" class="btn btn-warning">Pay Upline</button>
                     </form>
                 {% endif %}
+            {% endif %}
+            {% if referral_obligation %}
+                <div class="alert alert-warning">{{ payment_status_message }}</div>
+            {% endif %}
+            {% if service_fee_due %}
+                <div class="alert alert-warning">{{ service_fee_message }}</div>
+                <form method="post" action="{% url 'payments:pay_service_fee' %}" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <input type="hidden" name="amount" value="{{ service_fee_amount|floatformat:2 }}">
+                    <div class="mb-3">
+                        <label for="service_proof" class="form-label">Upload Service Fee Payment Proof</label>
+                        <input type="file" name="service_proof" class="form-control" required>
+                    </div>
+                    <button type="submit" class="btn btn-warning">Pay Service Fee</button>
+                </form>
             {% endif %}
         {% else %}
             <p>No upline assigned at this time.</p>

@@ -72,41 +72,113 @@ def dashboard(request):
                 else:
                     logger.warning(f"No available member found starting from queue position {pos} for {member.user.username}")
 
-    # Upline payment details (for queue > 1)
+    # Upline and service fee payment details (for queue > 1)
     upline_member = None
     upline_amount = 0
     upline_account_number = "Not applicable"
     upline_payment_due = False
     payment_status_message = None
+    referral_obligation = False
+    service_fee_due = False
+    service_fee_message = None
+    service_fee_amount = decimal.Decimal('0')
+
     if member and member.upline and member.queue_position > 1:
         initial_payment = decimal.Decimal('3000')
-        full_payment_per_round = decimal.Decimal('12000')  # 4 × 3000 ETB
-        half_payment = decimal.Decimal('6000')  # 50% of 12000 ETB
+        payment_amount = decimal.Decimal(str(member.get_payment_amount()))
+        full_payment_per_round = payment_amount * 4
+        half_payment_threshold = member.get_half_payment_threshold()
+        service_fee = full_payment_per_round * decimal.Decimal('0.1')
+        net_to_member = {
+            1: decimal.Decimal('5400'),
+            2: decimal.Decimal('10800'),
+            3: decimal.Decimal('21600'),
+            4: decimal.Decimal('43200'),
+            5: decimal.Decimal('76800'),
+            6: decimal.Decimal('345600')
+        }
+
         downlines = EqubMember.objects.filter(upline=member, status='active')
-        # Get users of downlines
         downline_users = downlines.values_list('user', flat=True)
-        # Find approved payments from downlines to this member
         approved_payments = Payment.objects.filter(
             user__in=downline_users,
             status='approved',
             transactions__recipient=member.user
         ).distinct()
         paid_downlines = downlines.filter(user__in=approved_payments.values('user')).distinct()
+        total_received = sum(p.amount for p in approved_payments)
 
         if member.total_paid_to_upline < initial_payment:
             upline_amount = initial_payment - member.total_paid_to_upline
             payment_status_message = f"You must pay the remaining initial amount of {upline_amount:.2f} ETB to your upline {member.upline.user.username} to start participating."
             upline_payment_due = True
-        elif paid_downlines.count() == 2 and member.total_paid_to_upline < initial_payment + half_payment:
-            upline_amount = half_payment
-            payment_status_message = f"You've received 6000 ETB from 2 downlines. Please pay {upline_amount:.2f} ETB to your upline {member.upline.user.username}."
-            upline_payment_due = True
-        elif paid_downlines.count() == 4 and member.total_paid_to_upline < initial_payment + full_payment_per_round:
-            remaining_amount = full_payment_per_round - (member.total_paid_to_upline - initial_payment)
-            if remaining_amount > 0:
-                upline_amount = remaining_amount
-                payment_status_message = f"You've received 12000 ETB from 4 downlines. Please pay the remaining {upline_amount:.2f} ETB to your upline {member.upline.user.username}."
+        elif member.round_number <= 5:  # Apply payment logic for rounds 1-5
+            if paid_downlines.count() == 2 and total_received >= full_payment_per_round * decimal.Decimal('0.5') and member.total_paid_to_upline < initial_payment + (half_payment_threshold * decimal.Decimal('0.5')):
+                upline_amount = half_payment_threshold * decimal.Decimal('0.5')
+                payment_status_message = f"You've received {total_received:.2f} ETB from 2 downlines. Please pay {upline_amount:.2f} ETB to your upline {member.upline.user.username}."
                 upline_payment_due = True
+            elif paid_downlines.count() == 4 and total_received >= full_payment_per_round and member.total_paid_to_upline < initial_payment + half_payment_threshold:
+                remaining_amount = half_payment_threshold - (member.total_paid_to_upline - initial_payment)
+                if remaining_amount > 0:
+                    upline_amount = remaining_amount
+                    payment_status_message = f"You've received {total_received:.2f} ETB from 4 downlines. Please pay the remaining {upline_amount:.2f} ETB to your upline {member.upline.user.username}."
+                    upline_payment_due = True
+                # Check if service fee is due after full payment and upline payment
+                total_service_fee_paid = member.total_service_fee_paid
+                if paid_downlines.count() == 4 and total_received >= full_payment_per_round and total_service_fee_paid < service_fee:
+                    service_fee_due = True
+                    referrer_fee = decimal.Decimal('0')
+                    company_fee = service_fee
+                    if member.upline:
+                        referrer_fee = service_fee * decimal.Decimal('0.5')  # 5% to referrer
+                        company_fee = service_fee * decimal.Decimal('0.5')  # 5% to company
+                        # Credit referrer commission if not already paid
+                        if not Payment.objects.filter(user=member.upline.user, amount=referrer_fee, status='approved', transaction__type='referral_commission').exists():
+                            member.upline.commission_earned += referrer_fee
+                            member.upline.save()
+                            Payment.objects.create(
+                                user=member.upline.user,
+                                amount=referrer_fee,
+                                status='approved',
+                                payment_proof=None
+                            )
+                            Transaction.objects.create(
+                                payment=Payment.objects.latest('id'),
+                                recipient=member.upline.user,
+                                amount=referrer_fee,
+                                transaction_type='referral_commission'
+                            )
+                    service_fee_message = f"Service fee is due after receiving full payment. Please pay {company_fee:.2f} ETB to the company and {referrer_fee:.2f} ETB to your referrer (if applicable) for a total of {service_fee:.2f} ETB."
+        elif member.round_number == 6:  # 6th round obligation
+            referral_obligation = True
+            service_fee = full_payment_per_round * decimal.Decimal('0.1')
+            total_service_fee_paid = member.total_service_fee_paid
+            if total_received >= full_payment_per_round and total_service_fee_paid < service_fee:
+                service_fee_due = True
+                referrer_fee = decimal.Decimal('0')
+                company_fee = service_fee
+                if member.upline:
+                    company_fee = service_fee * decimal.Decimal('0.5')
+                    referrer_fee = service_fee * decimal.Decimal('0.5')
+                    if not Payment.objects.filter(user=member.upline.user, amount=referrer_fee, status='approved', transaction__type='referral_commission').exists():
+                        member.upline.commission_earned += referrer_fee
+                        member.upline.save()
+                        Payment.objects.create(
+                            user=member.upline.user,
+                            amount=referrer_fee,
+                            status='approved',
+                            payment_proof=None
+                        )
+                        Transaction.objects.create(
+                            payment=Payment.objects.latest('id'),
+                            recipient=member.upline.user,
+                            amount=referrer_fee,
+                            transaction_type='referral_commission'
+                        )
+                service_fee_message = f"You have reached the 6th round. You received {total_received:.2f} ETB. Service fee is due: {company_fee:.2f} ETB to the company and {referrer_fee:.2f} ETB to your referrer (if applicable) for a total of {service_fee:.2f} ETB. You are also obligated to create 5 new accounts."
+            else:
+                payment_status_message = f"You have reached the 6th round. You received {total_received:.2f} ETB (service fee: {company_fee:.2f} ETB, referrer fee: {referrer_fee:.2f} ETB if applicable). You are obligated to create 5 new accounts."
+
         if member.upline.user.userprofile.cbe_account_number:
             upline_account_number = member.upline.user.userprofile.cbe_account_number
         else:
@@ -124,6 +196,10 @@ def dashboard(request):
         'upline_account_number': upline_account_number,
         'upline_payment_due': upline_payment_due,
         'payment_status_message': payment_status_message,
+        'referral_obligation': referral_obligation,
+        'service_fee_due': service_fee_due,
+        'service_fee_message': service_fee_message,
+        'service_fee_amount': service_fee_amount,
         'error': request.session.pop('error', None) if 'error' in request.session else None
     })
 
@@ -132,8 +208,9 @@ def refer_member(request):
     if request.method == 'POST':
         username = request.POST.get('username')
         email = request.POST.get('email')
+        name = request.POST.get('name')
 
-        if username and email:
+        if username and email and name:
             try:
                 if User.objects.filter(username=username).exists() or User.objects.filter(email=email).exists():
                     return render(request, 'equb/referral.html', {'error': 'Username or email already exists.'})
@@ -141,15 +218,16 @@ def refer_member(request):
                 new_user = User.objects.create_user(username=username, email=email, password='defaultpassword123')
                 new_user.save()
 
-                UserProfile.objects.create(user=new_user, kyc_status='pending')
+                UserProfile.objects.create(user=new_user, kyc_status='pending', cbe_account_number=None)  # Adjusted to match existing fields
 
-                max_queue = EqubMember.objects.aggregate(models.Max('queue_position'))['queue_position__max'] or 0
+                max_queue = EqubMember.objects.aggregate(Max('queue_position'))['queue_position__max'] or 0
                 new_member = EqubMember.objects.create(
                     user=new_user,
                     queue_position=max_queue + 1,
                     round_number=1,
                     status='active',
-                    upline=None
+                    upline=None,
+                    total_service_fee_paid=decimal.Decimal('0')
                 )
 
                 referrer_member = EqubMember.objects.filter(user=request.user, status__in=['active', 'completed']).first()
@@ -170,10 +248,12 @@ def refer_member(request):
                         amount=commission,
                         transaction_type='commission'
                     )
+                    new_member.upline = referrer_member
+                    new_member.save()
 
                 return render(request, 'equb/referral.html', {'success': 'Referral successful! Commission credited.'})
             except Exception as e:
                 return render(request, 'equb/referral.html', {'error': str(e)})
         else:
-            return render(request, 'equb/referral.html', {'error': 'Please provide both username and email.'})
+            return render(request, 'equb/referral.html', {'error': 'Please provide username, email, and name.'})
     return render(request, 'equb/referral.html')
